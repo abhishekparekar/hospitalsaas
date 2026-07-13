@@ -305,7 +305,7 @@ const styles = StyleSheet.create({
   },
   logoutText: {
     color: '#f87171',
-    fontWeight: '850',
+    fontWeight: '800',
     fontSize: 14,
   },
 });

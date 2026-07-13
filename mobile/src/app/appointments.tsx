@@ -182,7 +182,7 @@ const styles = StyleSheet.create({
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'start',
+    alignItems: 'flex-start',
   },
   patientName: {
     fontSize: 16,
