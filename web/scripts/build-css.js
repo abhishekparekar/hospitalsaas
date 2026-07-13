@@ -1,8 +1,4 @@
 const fs = require('fs');
-const { execSync } = require('child_process');
-
-console.log('Compiling TailwindCSS...');
-execSync('npx tailwindcss -i ./src/index.css -o ./src/output.css', { stdio: 'inherit' });
 
 console.log('Optimizing CSS (replacing infinity * 1px with 9999px)...');
 const outputPath = './src/output.css';
