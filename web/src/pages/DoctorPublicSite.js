@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { doc, getDoc, getDocs, query, where, collection, addDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocs, query, where, collection, addDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { getThemeColor } from '../components/ThemeHelper';
 
@@ -27,6 +27,14 @@ export default function DoctorPublicSite() {
   const [complaint, setComplaint] = useState('');
   const [bookingSuccess, setBookingSuccess] = useState(false);
   const [bookingLoading, setBookingLoading] = useState(false);
+
+  // Contact Form State
+  const [contactName, setContactName] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
+  const [contactEmail, setContactEmail] = useState('');
+  const [contactMessage, setContactMessage] = useState('');
+  const [contactSuccess, setContactSuccess] = useState(false);
+  const [contactLoading, setContactLoading] = useState(false);
 
   useEffect(() => {
     const fetchTenantData = async () => {
@@ -91,6 +99,22 @@ export default function DoctorPublicSite() {
         notes: ''
       });
 
+      // Auto-onboard/register patient profile in Firestore
+      const patientDocRef = doc(db, 'tenants', tenantId, 'patients', patientPhone.trim());
+      const patientSnap = await getDoc(patientDocRef);
+      if (!patientSnap.exists()) {
+        await setDoc(patientDocRef, {
+          name: patientName.trim(),
+          phone: patientPhone.trim(),
+          email: patientEmail.trim(),
+          gender: '',
+          age: '',
+          medical_history: '',
+          notes: '',
+          created_at: new Date()
+        });
+      }
+
       // Simple WhatsApp alert request simulation
       if (tenant.whatsapp_notify_enabled) {
         const messageText = `New Appointment! Patient: ${patientName}. Phone: ${patientPhone}. Date: ${prefDate}. Time: ${prefTime}.`;
@@ -114,6 +138,34 @@ export default function DoctorPublicSite() {
     setBookingLoading(false);
   };
 
+  const handleContactSubmit = async (e) => {
+    e.preventDefault();
+    if (!contactName.trim() || !contactPhone.trim() || !contactMessage.trim()) {
+      alert('Please fill in all required fields.');
+      return;
+    }
+    setContactLoading(true);
+    try {
+      await addDoc(collection(db, 'tenants', tenantId, 'messages'), {
+        name: contactName.trim(),
+        phone: contactPhone.trim(),
+        email: contactEmail.trim(),
+        message: contactMessage.trim(),
+        status: 'unread',
+        created_at: new Date()
+      });
+      setContactSuccess(true);
+      setContactName('');
+      setContactPhone('');
+      setContactEmail('');
+      setContactMessage('');
+      setTimeout(() => setContactSuccess(false), 4000);
+    } catch (err) {
+      alert('Failed to send message: ' + err.message);
+    }
+    setContactLoading(false);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex justify-center items-center text-slate-400">
@@ -127,6 +179,34 @@ export default function DoctorPublicSite() {
       <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center text-slate-400">
         <h2 className="text-2xl font-bold text-white mb-4">{errorMsg || 'Clinic Details Missing'}</h2>
         <Link to="/" className="text-emerald-400 hover:underline">Back to ClinicPage homepage</Link>
+      </div>
+    );
+  }
+
+  // Website unpublished gate — show Coming Soon
+  if (tenant && tenant.website_published === false) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-center px-6">
+        <div className="text-6xl mb-6">🏥</div>
+        <h1 className="text-3xl font-black text-white mb-3">{profile.clinic_name}</h1>
+        <p className="text-slate-400 text-sm mb-2">{profile.salutation} {profile.doctor_name} · {profile.speciality}</p>
+        <div className="mt-8 bg-slate-900 border border-slate-800 rounded-2xl p-8 max-w-sm w-full space-y-4">
+          <h2 className="text-lg font-bold text-white">Website Coming Soon</h2>
+          <p className="text-slate-400 text-sm leading-relaxed">This clinic's website is being set up. Check back soon or contact us directly.</p>
+          <div className="space-y-2 pt-2">
+            {profile.phone && (
+              <a href={`tel:${profile.phone}`} className="flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-white py-2.5 px-4 rounded-xl text-sm font-semibold transition">
+                📞 {profile.phone}
+              </a>
+            )}
+            {profile.whatsapp_number && (
+              <a href={`https://wa.me/${profile.whatsapp_number}`} target="_blank" rel="noreferrer" className="flex items-center justify-center gap-2 bg-[#25d366] hover:bg-[#20ba5a] text-white py-2.5 px-4 rounded-xl text-sm font-semibold transition">
+                💬 Chat on WhatsApp
+              </a>
+            )}
+          </div>
+        </div>
+        <p className="text-xs text-slate-600 mt-8">Powered by <Link to="/" className="text-emerald-500/80 hover:underline">ClinicPage</Link></p>
       </div>
     );
   }
@@ -399,36 +479,106 @@ export default function DoctorPublicSite() {
 
       {/* Location / Contact */}
       <section id="contact" className="py-20 bg-slate-900/40 border-t border-slate-900 px-6">
-        <div className="max-w-7xl mx-auto grid md:grid-cols-2 gap-12">
-          <div className="space-y-6">
-            <h3 className="text-2xl font-bold text-white">Find Us</h3>
-            <p className="text-slate-400 text-sm leading-relaxed">{profile.clinic_address}</p>
-            <div className="space-y-4 pt-4">
-              <div className="flex items-center space-x-3 text-slate-300">
-                <span className="text-emerald-400">📞</span>
-                <a href={`tel:${profile.phone}`} className="hover:underline text-sm font-semibold">{profile.phone}</a>
-              </div>
-              <div className="flex items-center space-x-3 text-slate-300">
-                <span className="text-emerald-400">✉️</span>
-                <a href={`mailto:${profile.email}`} className="hover:underline text-sm">{profile.email}</a>
-              </div>
-              <div className="flex items-center space-x-3 text-slate-300">
-                <span className="text-emerald-400">💬</span>
-                <a href={`https://wa.me/${profile.whatsapp_number}`} target="_blank" rel="noreferrer" className="hover:underline text-sm font-semibold">Chat on WhatsApp</a>
+        <div className="max-w-7xl mx-auto grid md:grid-cols-2 gap-16">
+          {/* Left Column: Contact info & Map */}
+          <div className="space-y-8">
+            <div>
+              <h3 className="text-2xl font-bold text-white mb-4">Find Us</h3>
+              <p className="text-slate-400 text-sm leading-relaxed">{profile.clinic_address}</p>
+              <div className="space-y-4 pt-4">
+                <div className="flex items-center space-x-3 text-slate-300">
+                  <span className="text-emerald-400 text-lg">📞</span>
+                  <a href={`tel:${profile.phone}`} className="hover:underline text-sm font-semibold">{profile.phone}</a>
+                </div>
+                <div className="flex items-center space-x-3 text-slate-300">
+                  <span className="text-emerald-400 text-lg">✉️</span>
+                  <a href={`mailto:${profile.email}`} className="hover:underline text-sm">{profile.email}</a>
+                </div>
+                <div className="flex items-center space-x-3 text-slate-300">
+                  <span className="text-emerald-400 text-lg">💬</span>
+                  <a href={`https://wa.me/${profile.whatsapp_number}`} target="_blank" rel="noreferrer" className="hover:underline text-sm font-semibold">Chat on WhatsApp</a>
+                </div>
               </div>
             </div>
+            {profile.map_embed_url && (
+              <div className="w-full h-64 rounded-2xl overflow-hidden border border-slate-800 shadow-2xl">
+                <iframe 
+                  src={profile.map_embed_url} 
+                  className="w-full h-full border-0" 
+                  allowFullScreen="" 
+                  loading="lazy" 
+                  title="Clinic Coordinates Map"
+                />
+              </div>
+            )}
           </div>
-          {profile.map_embed_url && (
-            <div className="w-full h-80 rounded-2xl overflow-hidden border border-slate-800 shadow-2xl">
-              <iframe 
-                src={profile.map_embed_url} 
-                className="w-full h-full border-0" 
-                allowFullScreen="" 
-                loading="lazy" 
-                title="Clinic Coordinates Map"
-              />
-            </div>
-          )}
+
+          {/* Right Column: Contact form */}
+          <div className="bg-slate-900 border border-slate-850 p-8 rounded-3xl shadow-xl">
+            <h3 className="text-xl font-bold text-white mb-2">Send Message</h3>
+            <p className="text-xs text-slate-400 mb-6">Have an inquiry? Fill in the form and the clinic staff will revert soon.</p>
+
+            {contactSuccess && (
+              <div className="bg-emerald-950/60 border border-emerald-800 text-emerald-400 p-3 rounded-lg text-xs font-bold mb-4">
+                Your message has been sent successfully!
+              </div>
+            )}
+
+            <form onSubmit={handleContactSubmit} className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-400 block mb-2">FULL NAME *</label>
+                <input 
+                  type="text" 
+                  value={contactName}
+                  onChange={e => setContactName(e.target.value)}
+                  required
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-slate-200 focus:outline-none focus:border-emerald-500 text-sm"
+                  placeholder="John Doe"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-400 block mb-2">PHONE NUMBER *</label>
+                  <input 
+                    type="tel" 
+                    value={contactPhone}
+                    onChange={e => setContactPhone(e.target.value)}
+                    required
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-slate-200 focus:outline-none focus:border-emerald-500 text-sm"
+                    placeholder="99999 99999"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-400 block mb-2">EMAIL ADDRESS</label>
+                  <input 
+                    type="email" 
+                    value={contactEmail}
+                    onChange={e => setContactEmail(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-slate-200 focus:outline-none focus:border-emerald-500 text-sm"
+                    placeholder="john@example.com"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-400 block mb-2">YOUR MESSAGE *</label>
+                <textarea 
+                  rows={4}
+                  value={contactMessage}
+                  onChange={e => setContactMessage(e.target.value)}
+                  required
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-slate-200 focus:outline-none focus:border-emerald-500 text-sm resize-none"
+                  placeholder="Describe your query or requirement..."
+                />
+              </div>
+              <button 
+                type="submit" 
+                disabled={contactLoading}
+                className={`w-full font-black py-3 rounded-lg text-sm transition ${themeClasses.bg} ${themeClasses.hover} text-white flex justify-center items-center`}
+              >
+                {contactLoading ? 'Sending...' : 'Send Inquiry'}
+              </button>
+            </form>
+          </div>
         </div>
       </section>
 

@@ -17,8 +17,7 @@ export default function PlatformLandingPage() {
             <a href="#faq" className="hover:text-emerald-400 transition">FAQs</a>
           </nav>
           <div className="flex space-x-4">
-            <Link to="/admin" className="px-4 py-2 text-sm text-slate-300 hover:text-white transition font-medium">Doctor Login</Link>
-            <Link to="/superadmin" className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-4 py-2 rounded-lg text-sm font-semibold transition">Super Admin</Link>
+            <Link to="/admin" className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-4 py-2 rounded-lg text-sm font-semibold transition">Doctor Login</Link>
           </div>
         </div>
       </header>

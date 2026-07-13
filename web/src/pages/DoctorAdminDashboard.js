@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { 
   doc, 
   getDoc, 
-  getDocs, 
   setDoc, 
   updateDoc, 
   addDoc, 
@@ -18,6 +17,7 @@ import { db, auth } from '../firebase';
 
 export default function DoctorAdminDashboard() {
   const [user, setUser] = useState(null);
+  const [userRole, setUserRole] = useState('doctor');
   const [tenantId, setTenantId] = useState(null);
   const [tenant, setTenant] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -32,16 +32,45 @@ export default function DoctorAdminDashboard() {
   const [gallery, setGallery] = useState([]);
   const [blogs, setBlogs] = useState([]);
 
+  // Patients and Messages States
+  const [patients, setPatients] = useState([]);
+  const [messages, setMessages] = useState([]);
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  const [patientModalOpen, setPatientModalOpen] = useState(false);
+  const [editPatientForm, setEditPatientForm] = useState(null);
+
   // Impersonation, Support, and Billing States
   const [isImpersonated, setIsImpersonated] = useState(false);
   const [supportSubject, setSupportSubject] = useState('');
   const [supportMessage, setSupportMessage] = useState('');
   const [supportTickets, setSupportTickets] = useState([]);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Staff management state
+  const [staff, setStaff] = useState([]);
+  const [newStaffName, setNewStaffName] = useState('');
+  const [newStaffEmail, setNewStaffEmail] = useState('');
+  const [newStaffPassword, setNewStaffPassword] = useState('');
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [staffError, setStaffError] = useState('');
+  const [staffSuccess, setStaffSuccess] = useState('');
+
+  const allowedTabs = useMemo(() => {
+    return userRole === 'staff'
+      ? ['Overview', 'Appointments', 'Patients', 'Messages', 'Support']
+      : ['Overview', 'Appointments', 'Patients', 'Messages', 'Profile', 'OPD Timings', 'Services', 'Gallery', 'Blogs', 'Staff', 'Settings', 'Billing', 'Support'];
+  }, [userRole]);
 
   // Form Inputs temporary editors
-  const [newService, setNewService] = useState({ title: '', description: '', icon: '🩺', order: 1, active: true });
+  const [newService, setNewService] = useState({ title: '', description: '', icon: 'ðŸ©º', order: 1, active: true });
   const [newImage, setNewImage] = useState({ image_url: '', caption: '', order: 1 });
   const [newBlog, setNewBlog] = useState({ title: '', body_markdown: '', published: true });
+
+  useEffect(() => {
+    if (!allowedTabs.includes(activeTab)) {
+      setActiveTab('Overview');
+    }
+  }, [userRole, activeTab, allowedTabs]);
 
   useEffect(() => {
     let unsubAppt = () => {};
@@ -49,6 +78,9 @@ export default function DoctorAdminDashboard() {
     let unsubGal = () => {};
     let unsubBlogs = () => {};
     let unsubTickets = () => {};
+    let unsubPatients = () => {};
+    let unsubMessages = () => {};
+    let unsubStaff = () => {};
 
     const impersonatedId = localStorage.getItem('impersonate_tenant_id');
     if (impersonatedId) {
@@ -84,6 +116,15 @@ export default function DoctorAdminDashboard() {
             setSupportTickets(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => b.created_at?.seconds - a.created_at?.seconds));
           }
         );
+        unsubPatients = onSnapshot(collection(db, 'tenants', impersonatedId, 'patients'), (snap) => {
+          setPatients(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        });
+        unsubMessages = onSnapshot(collection(db, 'tenants', impersonatedId, 'messages'), (snap) => {
+          setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => b.created_at?.seconds - a.created_at?.seconds));
+        });
+        unsubStaff = onSnapshot(collection(db, 'tenants', impersonatedId, 'staff'), (snap) => {
+          setStaff(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        });
 
         const profSnap = await getDoc(profRef);
         if (profSnap.exists()) setProfileForm(profSnap.data());
@@ -101,6 +142,8 @@ export default function DoctorAdminDashboard() {
         unsubGal();
         unsubBlogs();
         unsubTickets();
+        unsubPatients();
+        unsubMessages();
       };
     }
 
@@ -110,23 +153,24 @@ export default function DoctorAdminDashboard() {
         return;
       }
       setUser(usr);
+      const staffTenantId = sessionStorage.getItem('staff_tenant_id');
+      let tid = impersonatedId || staffTenantId || usr.uid;
+      let role = 'doctor';
 
-      // Check tenant mapping:
-      const q = query(collection(db, 'tenants'), where('owner_uid', '==', usr.uid));
-      const querySnapshot = await getDocs(q);
-      
-      let tid = usr.uid;
-      if (!querySnapshot.empty) {
-        tid = querySnapshot.docs[0].id;
-        setTenant(querySnapshot.docs[0].data());
-      } else {
-        // Create matching base tenant doc if they just logged in without seed
-        const defaultTenantRef = doc(db, 'tenants', usr.uid);
-        const tSnap = await getDoc(defaultTenantRef);
-        if (tSnap.exists()) {
-          setTenant(tSnap.data());
+      // 2. Load tenant configuration
+      const tenantRef = doc(db, 'tenants', tid);
+      const tSnap = await getDoc(tenantRef);
+      if (tSnap.exists()) {
+        const tenantData = tSnap.data();
+        setTenant(tenantData);
+        const sessionRole = sessionStorage.getItem('user_role');
+        if (sessionRole === 'staff') {
+          role = 'staff';
         } else {
-          // Empty setup
+          role = tenantData.user_type || 'doctor';
+        }
+      } else {
+        if (!impersonatedId) {
           const initialTenantData = {
             tenant_slug: `dr-${usr.uid.substring(0, 6)}`,
             status: 'active',
@@ -136,12 +180,16 @@ export default function DoctorAdminDashboard() {
             owner_uid: usr.uid,
             contact_email: usr.email,
             contact_phone: '+919999999999',
-            whatsapp_notify_enabled: false
+            whatsapp_notify_enabled: false,
+            website_published: true,
+            user_type: 'doctor'
           };
-          await setDoc(defaultTenantRef, initialTenantData);
+          await setDoc(tenantRef, initialTenantData);
           setTenant(initialTenantData);
         }
       }
+
+      setUserRole(role);
       setTenantId(tid);
 
       // Fetch Sub-documents
@@ -167,6 +215,15 @@ export default function DoctorAdminDashboard() {
           setSupportTickets(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => b.created_at?.seconds - a.created_at?.seconds));
         }
       );
+      unsubPatients = onSnapshot(collection(db, 'tenants', tid, 'patients'), (snap) => {
+        setPatients(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      });
+      unsubMessages = onSnapshot(collection(db, 'tenants', tid, 'messages'), (snap) => {
+        setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => b.created_at?.seconds - a.created_at?.seconds));
+      });
+      unsubStaff = onSnapshot(collection(db, 'tenants', tid, 'staff'), (snap) => {
+        setStaff(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      });
 
       // Load values into profile and timings forms
       const profSnap = await getDoc(profRef);
@@ -226,8 +283,56 @@ export default function DoctorAdminDashboard() {
       unsubGal();
       unsubBlogs();
       unsubTickets();
+      unsubPatients();
+      unsubMessages();
+      unsubStaff();
     };
   }, [navigate]);
+
+  const handleCreateStaff = async (e) => {
+    e.preventDefault();
+    setStaffLoading(true);
+    setStaffError('');
+    setStaffSuccess('');
+
+    try {
+      await addDoc(collection(db, 'tenants', tenantId, 'staff'), {
+        name: newStaffName,
+        email: newStaffEmail,
+        designation: newStaffPassword || 'Staff',
+        status: 'active',
+        created_at: new Date()
+      });
+
+      setStaffSuccess(`Staff member ${newStaffName} registered successfully!`);
+      setNewStaffName('');
+      setNewStaffEmail('');
+      setNewStaffPassword('');
+    } catch (err) {
+      setStaffError(err.message);
+    } finally {
+      setStaffLoading(false);
+    }
+  };
+
+  const handleDeleteStaff = async (staffId) => {
+    if (!window.confirm("Are you sure you want to delete this staff member?")) return;
+    try {
+      await deleteDoc(doc(db, 'tenants', tenantId, 'staff', staffId));
+      alert('Staff member deleted successfully.');
+    } catch (err) {
+      alert('Failed to delete staff: ' + err.message);
+    }
+  };
+
+  const handleToggleStaffStatus = async (staffMember) => {
+    try {
+      const nextStatus = staffMember.status === 'suspended' ? 'active' : 'suspended';
+      await updateDoc(doc(db, 'tenants', tenantId, 'staff', staffMember.id), { status: nextStatus });
+    } catch (err) {
+      alert('Failed to update staff status: ' + err.message);
+    }
+  };
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -254,11 +359,27 @@ export default function DoctorAdminDashboard() {
     }
   };
 
-  const handleAppointmentStatus = async (apptId, nextStatus) => {
+  const handleAppointmentStatus = async (apptId, nextStatus, appt) => {
     try {
       await updateDoc(doc(db, 'tenants', tenantId, 'appointments', apptId), {
         status: nextStatus
       });
+
+      // Send WhatsApp notification to patient on confirmation
+      if (nextStatus === 'confirmed' && appt?.patient_phone && tenant?.callmebot_api_key) {
+        const msg = `Hello ${appt.patient_name}! Your appointment at ${profileForm?.clinic_name || 'the clinic'} on ${appt.preferred_date} at ${appt.preferred_time} has been CONFIRMED. Please arrive on time. Thank you!`;
+        const encoded = encodeURIComponent(msg);
+        const url = `https://api.callmebot.com/whatsapp.php?phone=${appt.patient_phone}&text=${encoded}&apikey=${tenant.callmebot_api_key}`;
+        fetch(url).catch(() => {});
+      }
+
+      // Mark completed message
+      if (nextStatus === 'completed' && appt?.patient_phone && tenant?.callmebot_api_key) {
+        const msg = `Thank you ${appt.patient_name} for visiting ${profileForm?.clinic_name || 'our clinic'}! We hope you feel better soon. For follow-up, call us anytime.`;
+        const encoded = encodeURIComponent(msg);
+        const url = `https://api.callmebot.com/whatsapp.php?phone=${appt.patient_phone}&text=${encoded}&apikey=${tenant.callmebot_api_key}`;
+        fetch(url).catch(() => {});
+      }
     } catch (err) {
       alert('Failed to update status: ' + err.message);
     }
@@ -268,7 +389,7 @@ export default function DoctorAdminDashboard() {
     e.preventDefault();
     try {
       await addDoc(collection(db, 'tenants', tenantId, 'services'), newService);
-      setNewService({ title: '', description: '', icon: '🩺', order: 1, active: true });
+      setNewService({ title: '', description: '', icon: 'ðŸ©º', order: 1, active: true });
     } catch (err) {
       alert('Add service failed: ' + err.message);
     }
@@ -366,7 +487,7 @@ export default function DoctorAdminDashboard() {
       });
 
       setTenant({ ...tenant, status: 'active', plan: selectedPlan, plan_expiry: expiry, payment_history: updatedHistory });
-      alert(`Payment of ₹${transaction.amount} simulated successfully! Plan updated to ${selectedPlan.toUpperCase()}.`);
+      alert(`Payment of â‚¹${transaction.amount} simulated successfully! Plan updated to ${selectedPlan.toUpperCase()}.`);
     } catch (err) {
       alert('Payment simulation failed: ' + err.message);
     }
@@ -378,11 +499,7 @@ export default function DoctorAdminDashboard() {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex justify-center items-center text-slate-400">
-        <span className="animate-pulse text-lg font-semibold">Opening Clinic Control Board...</span>
-      </div>
-    );
+    return <div className="min-h-screen bg-slate-950" />;
   }
 
   return (
@@ -395,9 +512,29 @@ export default function DoctorAdminDashboard() {
           </button>
         </div>
       )}
-      <div className="flex flex-col lg:flex-row flex-grow">
-        {/* Sidebar */}
-        <aside className="w-full lg:w-72 bg-slate-900 border-b lg:border-b-0 lg:border-r border-slate-800 p-6 flex flex-col justify-between">
+
+      {/* Mobile Header Bar */}
+      <div className="lg:hidden flex items-center justify-between bg-slate-900 border-b border-slate-800 p-4 sticky top-0 z-40">
+        <div className="flex items-center space-x-3">
+          <div className="bg-emerald-500 text-slate-950 p-2 rounded-xl font-black text-xs">CP</div>
+          <span className="text-sm font-bold tracking-tight text-white">ClinicPage Dashboard</span>
+        </div>
+        <button 
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          className="text-slate-400 hover:text-white focus:outline-none px-3 py-1.5 rounded-lg bg-slate-850 border border-slate-800 text-xs font-bold transition"
+        >
+          {mobileMenuOpen ? '✕ Close' : '☰ Menu'}
+        </button>
+      </div>
+
+      {/* Backdrop overlay for mobile menu drawer */}
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm lg:hidden z-40" onClick={() => setMobileMenuOpen(false)} />
+      )}
+
+      <div className="flex flex-col lg:flex-row flex-grow relative">
+        {/* Sliding Sidebar Drawer */}
+        <aside className={`bg-slate-900 border-r border-slate-800 p-6 flex flex-col justify-between fixed lg:static inset-y-0 left-0 z-50 w-72 transform lg:transform-none transition-transform duration-300 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
           <div className="space-y-8">
             <div className="flex items-center space-x-3">
               <div className="bg-emerald-500 text-slate-950 p-2 rounded-xl font-black">CP</div>
@@ -414,13 +551,21 @@ export default function DoctorAdminDashboard() {
             </div>
 
             <nav className="space-y-1">
-              {['Overview', 'Appointments', 'Profile', 'OPD Timings', 'Services', 'Gallery', 'Blogs', 'Settings', 'Billing', 'Support'].map((tab) => (
+              {allowedTabs.map((tab) => (
                 <button
                   key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition flex items-center space-x-3 ${activeTab === tab ? 'bg-emerald-500 text-slate-950 font-bold' : 'text-slate-400 hover:bg-slate-850 hover:text-white'}`}
+                  onClick={() => {
+                    setActiveTab(tab);
+                    setMobileMenuOpen(false);
+                  }}
+                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition flex items-center justify-between ${activeTab === tab ? 'bg-emerald-500 text-slate-950 font-bold' : 'text-slate-400 hover:bg-slate-850 hover:text-white'}`}
                 >
                   <span>{tab}</span>
+                  {tab === 'Messages' && messages.filter(m => m.status === 'unread').length > 0 && (
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${activeTab === 'Messages' ? 'bg-slate-950/40 text-slate-950' : 'bg-rose-500 text-white'}`}>
+                      {messages.filter(m => m.status === 'unread').length}
+                    </span>
+                  )}
                 </button>
               ))}
             </nav>
@@ -444,7 +589,14 @@ export default function DoctorAdminDashboard() {
         <main className="flex-grow p-6 sm:p-12 overflow-y-auto">
           <header className="mb-10 flex justify-between items-center border-b border-slate-900 pb-6">
             <div>
-              <h2 className="text-3xl font-black text-white tracking-tight">{activeTab}</h2>
+              <div className="flex items-center gap-3">
+                <h2 className="text-3xl font-black text-white tracking-tight">{activeTab}</h2>
+                {userRole === 'staff' && (
+                  <span className="bg-amber-950 text-amber-400 border border-amber-900 text-xs font-black px-2.5 py-1 rounded-full uppercase tracking-wider select-none">
+                    Staff Access
+                  </span>
+                )}
+              </div>
               <p className="text-sm text-slate-400">Configure and monitor your clinic setup details</p>
             </div>
           </header>
@@ -452,7 +604,7 @@ export default function DoctorAdminDashboard() {
           {/* OVERVIEW TAB */}
           {activeTab === 'Overview' && (
             <div className="space-y-8">
-              <div className="grid sm:grid-cols-3 gap-6">
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
                 <div className="bg-slate-900 border border-slate-850 p-6 rounded-2xl">
                   <span className="text-slate-400 text-xs font-bold uppercase tracking-wider">Total Bookings</span>
                   <span className="text-4xl font-extrabold text-white block mt-2">{appointments.length}</span>
@@ -462,6 +614,14 @@ export default function DoctorAdminDashboard() {
                   <span className="text-4xl font-extrabold text-amber-400 block mt-2">
                     {appointments.filter(a => a.status === 'pending').length}
                   </span>
+                </div>
+                <div className="bg-slate-900 border border-slate-850 p-6 rounded-2xl cursor-pointer hover:border-emerald-500/40 transition" onClick={() => setActiveTab('Patients')}>
+                  <span className="text-slate-400 text-xs font-bold uppercase tracking-wider">Total Patients</span>
+                  <span className="text-4xl font-extrabold text-emerald-400 block mt-2">{patients.length}</span>
+                </div>
+                <div className="bg-slate-900 border border-slate-850 p-6 rounded-2xl cursor-pointer hover:border-rose-500/40 transition" onClick={() => setActiveTab('Messages')}>
+                  <span className="text-slate-400 text-xs font-bold uppercase tracking-wider">Unread Messages</span>
+                  <span className="text-4xl font-extrabold text-rose-400 block mt-2">{messages.filter(m => m.status === 'unread').length}</span>
                 </div>
                 <div className="bg-slate-900 border border-slate-850 p-6 rounded-2xl">
                   <span className="text-slate-400 text-xs font-bold uppercase tracking-wider">Active Services</span>
@@ -536,6 +696,7 @@ export default function DoctorAdminDashboard() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-slate-800 text-slate-400 text-left">
+                        <th className="py-4">Appt ID</th>
                         <th className="py-4">Patient Name</th>
                         <th className="py-4">Contact Phone</th>
                         <th className="py-4">Consultation Time</th>
@@ -547,6 +708,9 @@ export default function DoctorAdminDashboard() {
                     <tbody className="divide-y divide-slate-850 text-slate-300">
                       {appointments.map(appt => (
                         <tr key={appt.id} className="hover:bg-slate-850/30">
+                          <td className="py-4">
+                            <span className="font-mono text-xs bg-slate-800 text-emerald-400 px-2 py-1 rounded">APT-{appt.id.substring(0,6).toUpperCase()}</span>
+                          </td>
                           <td className="py-4 font-bold text-white">{appt.patient_name}</td>
                           <td className="py-4">
                             <a href={`tel:${appt.patient_phone}`} className="hover:underline text-emerald-400">{appt.patient_phone}</a>
@@ -560,16 +724,16 @@ export default function DoctorAdminDashboard() {
                           </td>
                           <td className="py-4 text-right space-x-2">
                             {appt.status === 'pending' && (
-                              <button onClick={() => handleAppointmentStatus(appt.id, 'confirmed')} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-2 py-1 rounded transition font-semibold">
+                              <button onClick={() => handleAppointmentStatus(appt.id, 'confirmed', appt)} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-2 py-1 rounded transition font-semibold">
                                 Confirm
                               </button>
                             )}
                             {appt.status !== 'completed' && appt.status !== 'cancelled' && (
                               <>
-                                <button onClick={() => handleAppointmentStatus(appt.id, 'completed')} className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-2 py-1 rounded transition font-semibold">
+                                <button onClick={() => handleAppointmentStatus(appt.id, 'completed', appt)} className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-2 py-1 rounded transition font-semibold">
                                   Complete
                                 </button>
-                                <button onClick={() => handleAppointmentStatus(appt.id, 'cancelled')} className="bg-rose-950/60 border border-rose-900 text-rose-400 hover:bg-rose-900/40 text-xs px-2 py-1 rounded transition font-semibold">
+                                <button onClick={() => handleAppointmentStatus(appt.id, 'cancelled', appt)} className="bg-rose-950/60 border border-rose-900 text-rose-400 hover:bg-rose-900/40 text-xs px-2 py-1 rounded transition font-semibold">
                                   Cancel
                                 </button>
                               </>
@@ -840,7 +1004,7 @@ export default function DoctorAdminDashboard() {
                     value={newService.icon}
                     onChange={e => setNewService({ ...newService, icon: e.target.value })}
                     required
-                    placeholder="🩺"
+                    placeholder="ðŸ©º"
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-slate-200 text-xs focus:outline-none focus:border-emerald-500 text-center"
                   />
                 </div>
@@ -997,11 +1161,161 @@ export default function DoctorAdminDashboard() {
             </div>
           )}
 
+          {/* STAFF TAB */}
+          {activeTab === 'Staff' && userRole === 'doctor' && (
+            <div className="space-y-6">
+              <div className="grid lg:grid-cols-12 gap-8 items-start">
+                {/* Create Staff Form */}
+                <div className="lg:col-span-4 bg-slate-900 border border-slate-850 p-6 rounded-2xl shadow-xl space-y-5">
+                  <div>
+                    <h3 className="text-base font-bold text-white">Add Staff Member</h3>
+                    <p className="text-xs text-slate-400 mt-1">Create receptionist or assistant login credentials.</p>
+                  </div>
+
+                  {staffError && (
+                    <div className="bg-rose-950/60 border border-rose-800 text-rose-400 p-3 rounded-lg text-xs font-semibold">
+                      {staffError}
+                    </div>
+                  )}
+
+                  {staffSuccess && (
+                    <div className="bg-emerald-950/60 border border-emerald-800 text-emerald-400 p-3 rounded-lg text-xs font-semibold">
+                      {staffSuccess}
+                    </div>
+                  )}
+
+                  <form onSubmit={handleCreateStaff} className="space-y-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 block mb-1">STAFF FULL NAME</label>
+                      <input 
+                        type="text" 
+                        value={newStaffName}
+                        onChange={e => setNewStaffName(e.target.value)}
+                        required
+                        placeholder="e.g. Amit Sharma"
+                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 block mb-1">EMAIL ADDRESS</label>
+                      <input 
+                        type="email" 
+                        value={newStaffEmail}
+                        onChange={e => setNewStaffEmail(e.target.value)}
+                        required
+                        placeholder="staff@clinic.com"
+                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 block mb-1">DESIGNATION / ROLE</label>
+                      <input 
+                        type="text" 
+                        value={newStaffPassword}
+                        onChange={e => setNewStaffPassword(e.target.value)}
+                        required
+                        placeholder="e.g. Receptionist, Nurse"
+                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <button disabled={staffLoading} className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-2.5 rounded text-xs transition disabled:opacity-60">
+                      {staffLoading ? 'Registering...' : 'Register Staff Member'}
+                    </button>
+                  </form>
+                </div>
+
+                {/* Staff List Table */}
+                <div className="lg:col-span-8 bg-slate-900 border border-slate-850 rounded-2xl p-6 shadow-xl space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-base font-bold text-white">Registered Staff</h3>
+                    <span className="text-xs text-slate-400">{staff.length} active users</span>
+                  </div>
+
+                  {staff.length === 0 ? (
+                    <p className="text-slate-500 text-sm py-4">No staff members created yet.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-800 text-slate-400 text-left">
+                            <th className="py-3">Staff Name</th>
+                            <th className="py-3">Role / Designation</th>
+                            <th className="py-3">Status</th>
+                            <th className="py-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-850 text-slate-300">
+                          {staff.map(s => (
+                            <tr key={s.id} className="hover:bg-slate-850/30 transition">
+                              <td className="py-3 font-semibold text-white">
+                                <div>{s.name}</div>
+                                <div className="text-[10px] text-slate-500 font-normal">{s.email}</div>
+                              </td>
+                              <td className="py-3 text-slate-300 font-medium">{s.designation || 'Staff'}</td>
+                              <td className="py-3">
+                                <span className={`px-1.5 py-0.5 rounded font-black text-[10px] uppercase ${s.status === 'suspended' ? 'bg-rose-950 text-rose-400 border border-rose-900' : 'bg-emerald-950 text-emerald-400 border border-emerald-900'}`}>
+                                  {s.status || 'active'}
+                                </span>
+                              </td>
+                              <td className="py-3 text-right space-x-2">
+                                <button 
+                                  onClick={() => handleToggleStaffStatus(s)} 
+                                  className={`px-2 py-1 rounded text-[10px] font-bold border transition ${s.status === 'suspended' ? 'bg-emerald-950 border-emerald-900 text-emerald-400' : 'bg-rose-950 border-rose-900 text-rose-400'}`}
+                                >
+                                  {s.status === 'suspended' ? 'Activate' : 'Suspend'}
+                                </button>
+                                <button 
+                                  onClick={() => handleDeleteStaff(s.id)} 
+                                  className="bg-slate-800 hover:bg-slate-700 text-rose-400 hover:text-rose-300 px-2 py-1 rounded transition text-[10px] font-bold"
+                                >
+                                  Delete
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* SETTINGS TAB */}
           {activeTab === 'Settings' && tenant && (
             <div className="space-y-6 bg-slate-900 border border-slate-850 p-8 rounded-2xl max-w-3xl">
-              <h3 className="text-lg font-bold text-white border-b border-slate-800 pb-4">Notifications & API Configuration</h3>
-              
+              <h3 className="text-lg font-bold text-white border-b border-slate-800 pb-4">Clinic Website & Notifications</h3>
+
+              {/* Website Publish Toggle */}
+              <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="font-bold text-white text-sm block">Website Status</span>
+                    <p className="text-xs text-slate-400 mt-0.5">Control whether your public clinic site is live or hidden.</p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const newVal = !tenant.website_published;
+                      await updateDoc(doc(db, 'tenants', tenantId), { website_published: newVal });
+                      setTenant({ ...tenant, website_published: newVal });
+                    }}
+                    className={`relative inline-flex w-14 h-7 items-center rounded-full transition-colors focus:outline-none ${tenant.website_published !== false ? 'bg-emerald-500' : 'bg-slate-700'}`}
+                  >
+                    <span className={`inline-block w-5 h-5 bg-white rounded-full shadow transition-transform ${tenant.website_published !== false ? 'translate-x-8' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+                <div className={`flex items-center gap-2 text-xs font-bold ${tenant.website_published !== false ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  <span className={`w-2 h-2 rounded-full ${tenant.website_published !== false ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+                  {tenant.website_published !== false ? 'LIVE â€” Visible to patients' : 'OFFLINE â€” Coming Soon page shown'}
+                </div>
+                {tenant.website_published !== false && (
+                  <a href={`/${tenant.tenant_slug}`} target="_blank" rel="noreferrer" className="text-xs text-emerald-400 hover:underline block">
+                    View your live site â†’ clinicpage.in/{tenant.tenant_slug}
+                  </a>
+                )}
+              </div>
+
               <div className="space-y-4">
                 <label className="flex items-center space-x-3 cursor-pointer">
                   <input 
@@ -1043,6 +1357,28 @@ export default function DoctorAdminDashboard() {
                     </p>
                   </div>
                 )}
+
+                <div className="p-4 bg-slate-950/60 border border-slate-850 rounded-xl space-y-4 pt-4">
+                  <span className="text-xs font-bold text-emerald-400 uppercase tracking-widest block">Staff Passcode Configuration</span>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 block mb-1">STAFF ACCESS PIN (NUMERIC)</label>
+                    <input 
+                      type="text"
+                      maxLength={6}
+                      value={tenant.staff_pin || ''}
+                      onChange={async (e) => {
+                        const val = e.target.value.replace(/[^0-9]/g, '');
+                        await updateDoc(doc(db, 'tenants', tenantId), { staff_pin: val });
+                        setTenant({ ...tenant, staff_pin: val });
+                      }}
+                      placeholder="e.g. 1234"
+                      className="w-24 bg-slate-950 border border-slate-800 rounded px-3 py-2 text-slate-200 text-xs focus:outline-none focus:border-emerald-500 font-bold tracking-widest text-center"
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-400 leading-relaxed">
+                    Set a simple passcode (e.g. 1234) for your reception/assistant staff. They can log in with your clinic email and this passcode to open the restricted staff dashboard.
+                  </p>
+                </div>
               </div>
             </div>
           )}
@@ -1074,13 +1410,13 @@ export default function DoctorAdminDashboard() {
                     onClick={() => simulatePayment('professional')}
                     className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-4 py-2 rounded font-bold text-xs transition"
                   >
-                    Renew Professional (₹7,999/yr)
+                    Renew Professional (â‚¹7,999/yr)
                   </button>
                   <button 
                     onClick={() => simulatePayment('pro_plus')}
                     className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded font-bold text-xs transition"
                   >
-                    Upgrade to Pro+ (₹9,999/yr)
+                    Upgrade to Pro+ (â‚¹9,999/yr)
                   </button>
                 </div>
               </div>
@@ -1099,7 +1435,7 @@ export default function DoctorAdminDashboard() {
                           <span className="text-[10px] text-slate-500">{tx.plan?.toUpperCase()} Plan</span>
                         </div>
                         <div className="text-right">
-                          <span className="font-bold text-emerald-400 block">₹{tx.amount}</span>
+                          <span className="font-bold text-emerald-400 block">â‚¹{tx.amount}</span>
                           <span className="text-[10px] text-slate-500">Charged Success</span>
                         </div>
                       </div>
@@ -1163,6 +1499,229 @@ export default function DoctorAdminDashboard() {
               </div>
             </div>
           )}
+
+          {/* PATIENTS TAB */}
+          {activeTab === 'Patients' && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-slate-400">All patients registered via appointment bookings from your clinic site.</p>
+                <span className="bg-emerald-950 text-emerald-400 text-xs font-bold px-3 py-1 rounded-full border border-emerald-900">{patients.length} total</span>
+              </div>
+
+              {patients.length === 0 ? (
+                <div className="bg-slate-900 border border-slate-850 p-12 rounded-2xl text-center">
+                  <p className="text-slate-500 font-medium">No patients yet. Patients are auto-registered when they book an appointment.</p>
+                </div>
+              ) : (
+                <div className="bg-slate-900 border border-slate-850 rounded-2xl overflow-hidden">
+                  <table className="w-full text-sm text-slate-300">
+                    <thead className="border-b border-slate-800 text-xs text-slate-500 uppercase tracking-widest bg-slate-950/50">
+                      <tr>
+                        <th className="py-4 px-6 text-left">Patient Name</th>
+                        <th className="py-4 px-6 text-left">Phone</th>
+                        <th className="py-4 px-6 text-left">Email</th>
+                        <th className="py-4 px-6 text-left">Gender / Age</th>
+                        <th className="py-4 px-6 text-left">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-850">
+                      {patients.map(p => (
+                        <tr key={p.id} className="hover:bg-slate-850/30 transition">
+                          <td className="py-4 px-6 font-bold text-white">{p.name}</td>
+                          <td className="py-4 px-6">
+                            <a href={`tel:${p.phone}`} className="text-emerald-400 hover:underline">{p.phone}</a>
+                          </td>
+                          <td className="py-4 px-6 text-slate-400">{p.email || 'â€”'}</td>
+                          <td className="py-4 px-6 text-slate-400">{[p.gender, p.age ? `${p.age}y` : ''].filter(Boolean).join(' / ') || 'â€”'}</td>
+                          <td className="py-4 px-6">
+                            <button
+                              onClick={() => {
+                                setSelectedPatient(p);
+                                setEditPatientForm({ ...p });
+                                setPatientModalOpen(true);
+                              }}
+                              className="bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition"
+                            >
+                              View Details
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Patient Detail Modal */}
+              {patientModalOpen && selectedPatient && editPatientForm && (
+                <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setPatientModalOpen(false)}>
+                  <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                    <div className="p-8">
+                      <div className="flex items-center justify-between mb-6">
+                        <div>
+                          <h3 className="text-xl font-black text-white">{selectedPatient.name}</h3>
+                          <p className="text-xs text-slate-500 mt-1">{selectedPatient.phone} Â· {selectedPatient.email || 'No email'}</p>
+                        </div>
+                        <button onClick={() => setPatientModalOpen(false)} className="text-slate-500 hover:text-white text-2xl transition">âœ•</button>
+                      </div>
+
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Gender</label>
+                            <select
+                              value={editPatientForm.gender || ''}
+                              onChange={e => setEditPatientForm({ ...editPatientForm, gender: e.target.value })}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 text-sm focus:outline-none focus:border-emerald-500"
+                            >
+                              <option value="">Select</option>
+                              <option value="Male">Male</option>
+                              <option value="Female">Female</option>
+                              <option value="Other">Other</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Age</label>
+                            <input
+                              type="number"
+                              value={editPatientForm.age || ''}
+                              onChange={e => setEditPatientForm({ ...editPatientForm, age: e.target.value })}
+                              placeholder="Age in years"
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 text-sm focus:outline-none focus:border-emerald-500"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Medical History</label>
+                          <textarea
+                            rows={3}
+                            value={editPatientForm.medical_history || ''}
+                            onChange={e => setEditPatientForm({ ...editPatientForm, medical_history: e.target.value })}
+                            placeholder="Known conditions, allergies, past surgeries, etc."
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 text-sm focus:outline-none focus:border-emerald-500 resize-none"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Doctor's Notes</label>
+                          <textarea
+                            rows={3}
+                            value={editPatientForm.notes || ''}
+                            onChange={e => setEditPatientForm({ ...editPatientForm, notes: e.target.value })}
+                            placeholder="Consultation notes, prescriptions, follow-up reminders..."
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 text-sm focus:outline-none focus:border-emerald-500 resize-none"
+                          />
+                        </div>
+
+                        <div className="pt-2">
+                          <h4 className="text-xs font-bold text-slate-400 uppercase mb-3">Appointment History</h4>
+                          {appointments.filter(a => a.patient_phone === selectedPatient.phone).length === 0 ? (
+                            <p className="text-xs text-slate-600">No appointments on record.</p>
+                          ) : (
+                            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                              {appointments.filter(a => a.patient_phone === selectedPatient.phone).map(a => (
+                                <div key={a.id} className="bg-slate-950 border border-slate-850 p-3 rounded-lg text-xs">
+                                  <div className="flex justify-between items-center">
+                                    <span className="font-bold text-slate-200">{a.preferred_date} at {a.preferred_time}</span>
+                                    <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${a.status === 'pending' ? 'bg-amber-950 text-amber-400 border border-amber-800' : a.status === 'confirmed' ? 'bg-emerald-950 text-emerald-400 border border-emerald-900' : 'bg-slate-800 text-slate-400'}`}>
+                                      {a.status}
+                                    </span>
+                                  </div>
+                                  {a.complaint && <p className="text-slate-500 mt-1 leading-relaxed">{a.complaint}</p>}
+                                  {a.notes && <p className="text-slate-400 mt-1 italic">{a.notes}</p>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={async () => {
+                            try {
+                              await setDoc(doc(db, 'tenants', tenantId, 'patients', selectedPatient.phone), editPatientForm, { merge: true });
+                              setPatientModalOpen(false);
+                              alert('Patient profile updated!');
+                            } catch (err) {
+                              alert('Failed to save: ' + err.message);
+                            }
+                          }}
+                          className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-3 rounded-xl text-sm transition"
+                        >
+                          Save Patient Profile
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* MESSAGES TAB */}
+          {activeTab === 'Messages' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-slate-400">Inquiries submitted via your public clinic website contact form.</p>
+                <div className="flex items-center space-x-3">
+                  <span className="bg-rose-950 text-rose-400 text-xs font-bold px-3 py-1 rounded-full border border-rose-900">{messages.filter(m => m.status === 'unread').length} unread</span>
+                  <span className="bg-slate-800 text-slate-400 text-xs font-bold px-3 py-1 rounded-full">{messages.length} total</span>
+                </div>
+              </div>
+
+              {messages.length === 0 ? (
+                <div className="bg-slate-900 border border-slate-850 p-12 rounded-2xl text-center">
+                  <p className="text-slate-500 font-medium">No messages received yet. Messages appear here when visitors contact you via your public site.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {messages.map(msg => (
+                    <div key={msg.id} className={`bg-slate-900 border rounded-2xl p-6 transition ${msg.status === 'unread' ? 'border-rose-900/60 shadow-rose-950/30 shadow-lg' : 'border-slate-850'}`}>
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-grow">
+                          <div className="flex items-center gap-3 mb-1">
+                            <span className="font-bold text-white">{msg.name}</span>
+                            {msg.status === 'unread' && (
+                              <span className="bg-rose-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full uppercase">New</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-4 text-xs text-slate-500 mb-3">
+                            <a href={`tel:${msg.phone}`} className="text-emerald-400 hover:underline">{msg.phone}</a>
+                            {msg.email && <a href={`mailto:${msg.email}`} className="hover:underline">{msg.email}</a>}
+                            <span>{msg.created_at?.seconds ? new Date(msg.created_at.seconds * 1000).toLocaleString() : 'Just now'}</span>
+                          </div>
+                          <p className="text-slate-300 text-sm leading-relaxed bg-slate-950/40 p-3 rounded-lg">{msg.message}</p>
+                        </div>
+
+                        <div className="flex flex-col gap-2 min-w-fit">
+                          <button
+                            onClick={async () => {
+                              const nextStatus = msg.status === 'unread' ? 'read' : 'unread';
+                              await updateDoc(doc(db, 'tenants', tenantId, 'messages', msg.id), { status: nextStatus });
+                            }}
+                            className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold px-3 py-2 rounded-lg transition"
+                          >
+                            {msg.status === 'unread' ? 'âœ“ Mark Read' : 'â†© Mark Unread'}
+                          </button>
+                          <button
+                            onClick={async () => {
+                              if (window.confirm('Delete this message?')) {
+                                await deleteDoc(doc(db, 'tenants', tenantId, 'messages', msg.id));
+                              }
+                            }}
+                            className="bg-rose-950/60 hover:bg-rose-900/60 text-rose-400 text-xs font-bold px-3 py-2 rounded-lg transition border border-rose-900/40"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
         </main>
       </div>
     </div>
