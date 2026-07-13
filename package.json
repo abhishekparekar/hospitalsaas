@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "sync-config": "node scripts/sync-config.js",
+    "build": "npm run web:build",
     "web": "npm run sync-config && npm start --prefix web",
     "web:build": "npm run sync-config && npm run build --prefix web",
     "mobile": "npm run sync-config && npm start --prefix mobile",
