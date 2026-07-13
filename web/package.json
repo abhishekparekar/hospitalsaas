@@ -29,8 +29,8 @@
     "concurrently": "^9.1.2"
   },
   "scripts": {
-    "start": "concurrently \"npx tailwindcss -i ./src/index.css -o ./src/output.css --watch\" \"react-scripts start\"",
-    "build": "npx tailwindcss -i ./src/index.css -o ./src/output.css && node scripts/build-css.js && react-scripts build",
+    "start": "concurrently \"tailwindcss -i ./src/index.css -o ./src/output.css --watch\" \"react-scripts start\"",
+    "build": "tailwindcss -i ./src/index.css -o ./src/output.css && node scripts/build-css.js && react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
