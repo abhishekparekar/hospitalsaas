@@ -1,0 +1,15 @@
+{
+  "name": "doctor-clinic-saas",
+  "private": true,
+  "scripts": {
+    "sync-config": "node scripts/sync-config.js",
+    "web": "npm run sync-config && npm start --prefix web",
+    "web:build": "npm run sync-config && npm run build --prefix web",
+    "mobile": "npm run sync-config && npm start --prefix mobile",
+    "backend": "npm start --prefix backend",
+    "dev": "concurrently \"npm run web\" \"npm run mobile\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@hookform/resolvers": "^5.4.0",
+    "@reduxjs/toolkit": "^2.12.0",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^13.5.0",
+    "axios": "^1.18.1",
+    "dayjs": "^1.11.21",
+    "firebase": "^12.15.0",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-hook-form": "^7.80.0",
+    "react-icons": "^5.7.0",
+    "react-redux": "^9.3.0",
+    "react-router-dom": "^7.18.1",
+    "react-scripts": "5.0.1",
+    "react-toastify": "^11.1.0",
+    "recharts": "^3.9.1",
+    "web-vitals": "^2.1.4",
+    "zod": "^4.4.3"
+  },
+  "scripts": {
+    "start": "concurrently \"npx tailwindcss -i ./src/index.css -o ./src/output.css --watch\" \"react-scripts start\"",
+    "build": "npx tailwindcss -i ./src/index.css -o ./src/output.css && react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.2",
+    "autoprefixer": "^10.5.2",
+    "concurrently": "^10.0.3",
+    "postcss": "^8.5.16",
+    "tailwindcss": "^4.3.2"
+  }
+}
